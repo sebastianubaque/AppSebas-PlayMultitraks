@@ -153,6 +153,8 @@
         </div>
         <div class="flex items-center gap-4 flex-wrap mt-4">
          <div class="flex items-center gap-2"><label for="bpm-input" class="font-semibold">BPM:</label> <input type="number" id="bpm-input" min="40" max="240" value="120" class="w-20 px-3 py-2 rounded-lg border-2 font-mono">
+         </div>
+         <div class="flex items-center gap-2"><label for="count-beats-select" class="font-semibold">Tiempos de Conteo:</label> <select id="count-beats-select" class="px-3 py-2 rounded-lg border-2 font-semibold cursor-pointer"> <option value="4">4 Tiempos</option> <option value="8">8 Tiempos</option> </select>
          </div><button id="automate-btn" class="px-6 py-2 rounded-lg font-semibold transition-all hover:scale-105"> 🤖 Automatizar Mix </button>
          <div id="beat-info" class="font-mono text-sm opacity-70"></div>
         </div>
@@ -213,6 +215,7 @@
     let userMarkers = [];
     let selectedMarkerForLoop = null;
     let activeLoop = null;
+    let countBeats = 4;
     
     const markerTypes = {
       'Intro 1': '#FF6B6B',
@@ -319,6 +322,11 @@
       bpmInput.style.backgroundColor = surfaceColor;
       bpmInput.style.color = textColor;
       bpmInput.style.borderColor = primaryColor;
+
+      const countBeatsSelect = document.getElementById('count-beats-select');
+      countBeatsSelect.style.backgroundColor = surfaceColor;
+      countBeatsSelect.style.color = textColor;
+      countBeatsSelect.style.borderColor = primaryColor;
 
       const automateBtn = document.getElementById('automate-btn');
       automateBtn.style.backgroundColor = secondaryColor;
@@ -487,7 +495,8 @@
             clickBeats: [],
             userMarkers: [],
             bpm: 120,
-            zoomLevel: 1
+            zoomLevel: 1,
+            countBeats: 4
           };
           
           projects.push(newProject);
@@ -566,8 +575,10 @@
       userMarkers = project.userMarkers || [];
       bpm = project.bpm || 120;
       zoomLevel = project.zoomLevel || 1;
+      countBeats = project.countBeats || 4;
       
       document.getElementById('bpm-input').value = bpm;
+      document.getElementById('count-beats-select').value = countBeats;
       updateZoom();
       
       const channelsContainer = document.getElementById('channels-container');
@@ -799,7 +810,7 @@
           
           <div class="flex items-center gap-2 flex-1">
             <div class="flex flex-col items-center gap-1">
-              <span class="text-xs opacity-50">����</span>
+              <span class="text-xs opacity-50">🔊</span>
               <input type="range" class="channel-fader h-20 w-2" min="0" max="100" value="75" data-index="${index}" orient="vertical" style="writing-mode: bt-lr; -webkit-appearance: slider-vertical;">
               <span class="text-xs opacity-50">🔇</span>
             </div>
@@ -942,7 +953,7 @@
     }
 
     function updateLevelDisplay(channel, value) {
-      const db = value === 0 ? '-���' : Math.round((value - 75) * 0.8);
+      const db = value === 0 ? '-∞' : Math.round((value - 75) * 0.8);
       channel.querySelector('.level-display').textContent = `${db}dB`;
     }
 
@@ -1181,6 +1192,7 @@
       project.userMarkers = userMarkers;
       project.bpm = bpm;
       project.zoomLevel = zoomLevel;
+      project.countBeats = countBeats;
       
       project.tracks = audioTracks.map(track => ({
         name: track.name,
@@ -1410,18 +1422,16 @@
       
       const startBeatIndex = clickBeats.findIndex(beat => Math.abs(beat.time - markerTime) < 0.1);
       
-      if (startBeatIndex === -1 || startBeatIndex < 4) {
-        showToast('⚠️ No hay suficientes beats antes del marcador', config);
+      if (startBeatIndex === -1 || startBeatIndex < countBeats) {
+        showToast(`⚠️ No hay suficientes beats antes del marcador (necesitas ${countBeats})`, config);
         return;
       }
       
-      const fourBeatsBeforeIndex = startBeatIndex - 4;
-      const fourBeatsBeforeTime = clickBeats[fourBeatsBeforeIndex].time;
+      const beatsBeforeIndex = startBeatIndex - countBeats;
+      const beatsBeforeTime = clickBeats[beatsBeforeIndex].time;
       
-      // Obtener el tiempo actual de reproducción
       const currentTime = audioTracks[0].audio.currentTime;
       
-      // Encontrar el próximo beat fuerte DESPUÉS del tiempo actual
       let nextStrongBeatTime = null;
       for (let i = 0; i < clickBeats.length; i++) {
         if (clickBeats[i].isStrong && clickBeats[i].time > currentTime) {
@@ -1445,20 +1455,16 @@
         return name.includes('guia') || name.includes('guía');
       });
       
-      // Mostrar mensaje de espera si no estamos en un beat fuerte
       const timeUntilNextStrongBeat = (nextStrongBeatTime - currentTime) * 1000;
       if (timeUntilNextStrongBeat > 100) {
         showToast('⏳ Esperando próximo beat fuerte...', config);
       }
       
-      // Esperar hasta el próximo beat fuerte
       setTimeout(() => {
-        // Silenciar SOLO la guía principal (el click sigue sonando)
         if (guideTrack && guideTrack.gainNode) {
           guideTrack.gainNode.gain.value = 0;
         }
         
-        // Reproducir guía temporal desde 4 beats antes
         let tempAudioContext = null;
         let tempAudio = null;
         
@@ -1466,7 +1472,7 @@
           tempAudioContext = new (window.AudioContext || window.webkitAudioContext)();
           tempAudio = new Audio();
           tempAudio.src = guideTrack.url;
-          tempAudio.currentTime = fourBeatsBeforeTime;
+          tempAudio.currentTime = beatsBeforeTime;
           tempAudio.volume = 1.0;
           
           const tempSource = tempAudioContext.createMediaElementSource(tempAudio);
@@ -1483,13 +1489,12 @@
           tempAudio.play();
         }
         
-        const countdownDuration = (markerTime - fourBeatsBeforeTime) * 1000;
-        const beatDuration = (markerTime - fourBeatsBeforeTime) / 4;
+        const countdownDuration = (markerTime - beatsBeforeTime) * 1000;
+        const beatDuration = (markerTime - beatsBeforeTime) / countBeats;
         
-        showCountdownWithTiming(4, beatDuration * 1000, config);
+        showCountdownWithTiming(countBeats, beatDuration * 1000, config);
         
         setTimeout(() => {
-          // Detener guía temporal
           if (tempAudio) {
             tempAudio.pause();
             tempAudio.src = '';
@@ -1498,17 +1503,14 @@
             tempAudioContext.close();
           }
           
-          // Saltar TODAS las pistas al marcador
           audioTracks.forEach(track => {
             track.audio.currentTime = markerTime;
           });
           
-          // Reactivar volumen de guía (el click nunca se silenció)
           if (guideTrack && guideTrack.gainNode && !guideTrack.muted) {
             updateAudioVolume(guideTrack);
           }
           
-          // Asegurar que todo esté sonando
           if (!isPlaying) {
             isPlaying = true;
             audioTracks.forEach(track => {
@@ -1573,7 +1575,7 @@
       const config = window.elementSdk ? window.elementSdk.config : defaultConfig;
       
       if (userMarkers.length < 2) {
-        showToast('⚠��� Necesitas al menos 2 marcadores para hacer Loop', config);
+        showToast('⚠️ Necesitas al menos 2 marcadores para hacer Loop', config);
         return;
       }
       
@@ -1601,26 +1603,26 @@
       const endTime = endMarkerData.time;
       
       if (clickBeats.length === 0) {
-        showToast('��️ No hay beats detectados. Primero automatiza el mix.', config);
+        showToast('⚠️ No hay beats detectados. Primero automatiza el mix.', config);
         return;
       }
       
       const startBeatIndex = clickBeats.findIndex(beat => Math.abs(beat.time - startTime) < 0.1);
       
-      if (startBeatIndex === -1 || startBeatIndex < 4) {
-        showToast('⚠️ No hay suficientes beats antes del marcador', config);
+      if (startBeatIndex === -1 || startBeatIndex < countBeats) {
+        showToast(`⚠️ No hay suficientes beats antes del marcador (necesitas ${countBeats})`, config);
         return;
       }
       
-      const fourBeatsBeforeIndex = startBeatIndex - 4;
-      const fourBeatsBeforeTime = clickBeats[fourBeatsBeforeIndex].time;
+      const beatsBeforeIndex = startBeatIndex - countBeats;
+      const beatsBeforeTime = clickBeats[beatsBeforeIndex].time;
       
       activeLoop = {
         startMarker: startMarkerData,
         endMarker: endMarkerData,
         startTime: startTime,
         endTime: endTime,
-        fourBeatsBeforeTime: fourBeatsBeforeTime,
+        beatsBeforeTime: beatsBeforeTime,
         checkInterval: null
       };
       
@@ -1629,7 +1631,7 @@
           const currentTime = audioTracks[0].audio.currentTime;
           
           if (currentTime >= endTime) {
-            jumpToFourBeatsBeforeStart();
+            jumpToBeatsBeforeStart();
           }
         }
       }, 50);
@@ -1638,7 +1640,7 @@
       showToast(`🔁 Loop activado: ${startMarkerData.name} ↔ ${endMarkerData.name}`, config);
       
       if (!isPlaying) {
-        jumpToFourBeatsBeforeStart();
+        jumpToBeatsBeforeStart();
         isPlaying = true;
         audioTracks.forEach(track => {
           track.audioContext.resume();
@@ -1648,7 +1650,7 @@
       }
     }
     
-    function jumpToFourBeatsBeforeStart() {
+    function jumpToBeatsBeforeStart() {
       if (!activeLoop) return;
       
       activeLoop.isJumping = true;
@@ -1659,18 +1661,15 @@
         return name.includes('guia') || name.includes('guía');
       });
       
-      // Silenciar la guía principal
       if (guideTrack && guideTrack.gainNode) {
         guideTrack.gainNode.gain.value = 0;
       }
       
-      // La timeline sigue en la posición actual, NO retrocede
-      // Reproducir guía temporal desde 4 beats antes del marcador
       if (guideTrack) {
         const tempAudioContext = new (window.AudioContext || window.webkitAudioContext)();
         const tempAudio = new Audio();
         tempAudio.src = guideTrack.url;
-        tempAudio.currentTime = activeLoop.fourBeatsBeforeTime;
+        tempAudio.currentTime = activeLoop.beatsBeforeTime;
         tempAudio.volume = 1.0;
         
         const tempSource = tempAudioContext.createMediaElementSource(tempAudio);
@@ -1686,19 +1685,17 @@
         tempAudioContext.resume();
         tempAudio.play();
         
-        const countdownDuration = (activeLoop.startTime - activeLoop.fourBeatsBeforeTime) * 1000;
+        const countdownDuration = (activeLoop.startTime - activeLoop.beatsBeforeTime) * 1000;
         
         setTimeout(() => {
           tempAudio.pause();
           tempAudio.src = '';
           tempAudioContext.close();
           
-          // DESPUÉS de los 4 beats, hacer el corte al marcador
           audioTracks.forEach(track => {
             track.audio.currentTime = activeLoop.startTime;
           });
           
-          // Reactivar volumen de la guía principal
           if (guideTrack && guideTrack.gainNode && !guideTrack.muted) {
             updateAudioVolume(guideTrack);
           }
@@ -1706,8 +1703,7 @@
           activeLoop.isJumping = false;
         }, countdownDuration);
       } else {
-        // Si no hay guía, solo esperar y hacer el corte
-        const countdownDuration = (activeLoop.startTime - activeLoop.fourBeatsBeforeTime) * 1000;
+        const countdownDuration = (activeLoop.startTime - activeLoop.beatsBeforeTime) * 1000;
         
         setTimeout(() => {
           audioTracks.forEach(track => {
@@ -1718,8 +1714,8 @@
         }, countdownDuration);
       }
       
-      const beatDuration = (activeLoop.startTime - activeLoop.fourBeatsBeforeTime) / 4;
-      showCountdownWithTiming(4, beatDuration * 1000, config);
+      const beatDuration = (activeLoop.startTime - activeLoop.beatsBeforeTime) / countBeats;
+      showCountdownWithTiming(countBeats, beatDuration * 1000, config);
     }
     
     function deactivateLoop() {
@@ -1738,7 +1734,13 @@
       saveCurrentProjectState();
     });
 
-
+    document.getElementById('count-beats-select').addEventListener('change', () => {
+      countBeats = parseInt(document.getElementById('count-beats-select').value) || 4;
+      saveCurrentProjectState();
+      
+      const config = window.elementSdk ? window.elementSdk.config : defaultConfig;
+      showToast(`✅ Tiempos de conteo: ${countBeats}`, config);
+    });
 
     function showMarkerSelector(beat) {
       const config = window.elementSdk ? window.elementSdk.config : defaultConfig;
@@ -2006,5 +2008,5 @@
       }, 3000);
     }
   </script>
- <script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'9b00dcc44629b6ac',t:'MTc2NjA4Mzk5OS4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+ <script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'9b00ec951663b6ac',t:'MTc2NjA4NDY0Ny4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
